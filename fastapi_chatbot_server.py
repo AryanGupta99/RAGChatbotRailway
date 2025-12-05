@@ -194,26 +194,24 @@ def generate_response(message: str, history: List[Dict], context: Optional[str] 
 YOUR ONLY JOB: Guide users through the EXACT steps from the knowledge base, in order, 1-2 steps at a time.
 
 CRITICAL RULES:
-1. ALWAYS give steps in sequential order: 1-2, then 3-4, then 5, etc.
-2. NEVER skip steps - if user says "done" after steps 1-2, give steps 3-4 next (NOT step 5!)
-3. COPY the exact step text from the KB - do not paraphrase
-4. After giving 1-2 steps, ALWAYS ask "Have you completed this?"
-5. DO NOT make up steps that aren't in the knowledge base
-6. Look at your previous response to see which steps you already gave, then give the NEXT steps
+1. ONLY use KB articles (source: kb_article) - IGNORE chat transcripts
+2. If the context has [EMAIL] or [URL] placeholders, DO NOT use it - say you'll connect them with support
+3. ALWAYS give steps in sequential order: 1-2, then 3-4, then 5, etc.
+4. NEVER skip steps - if user says "done" after steps 1-2, give steps 3-4 next
+5. COPY the exact step text from the KB - do not paraphrase
+6. After giving 1-2 steps, ALWAYS ask "Have you completed this?"
+7. DO NOT make up steps that aren't in the knowledge base
+8. Look at your previous response to see which steps you already gave, then give the NEXT steps
 
-EXAMPLE CONVERSATION:
-KB: "Step 1: Visit portal. Step 2: Click Forgot. Step 3: Enter CAPTCHA. Step 4: Choose method. Step 5: Enter password."
+EXAMPLE GOOD RESPONSE:
+KB Article: "Step 1: Visit portal. Step 2: Click Forgot. Step 3: Enter CAPTCHA."
+You: "Step 1: Visit portal. Step 2: Click Forgot. Have you completed this?"
 
-Bot: "Step 1: Visit portal. Step 2: Click Forgot. Have you completed this?"
-User: "done"
-Bot: "Step 3: Enter CAPTCHA. Step 4: Choose method. Have you completed this?"
-User: "yes"  
-Bot: "Step 5: Enter password. Have you completed this?"
+EXAMPLE BAD RESPONSE (DO NOT DO THIS):
+Chat Transcript: "Step 1: Email us at [EMAIL]"
+You: "Step 1: Email us at [EMAIL]" ← WRONG! Don't use chat transcripts with placeholders!
 
-WRONG EXAMPLE (DO NOT DO THIS):
-Bot: "Step 1: Visit portal. Step 2: Click Forgot. Have you completed this?"
-User: "done"
-Bot: "Step 5: Enter password." ← WRONG! You skipped steps 3-4!"""
+If you see [EMAIL], [URL], or chat transcript content, say: "I'll connect you with our support team at 1-888-415-5240 or support@acecloudhosting.com for assistance with this."""
     
     # Build messages
     messages = [{"role": "system", "content": system_prompt}]
@@ -345,6 +343,18 @@ async def salesiq_webhook(request: dict):
                 "replies": ["Hello! How can I assist you today?"],
                 "session_id": session_id
             }
+        
+        # Handle contact/support requests directly
+        contact_keywords = ['email', 'phone', 'contact', 'support number', 'call', 'reach', 'telephone']
+        if any(keyword in message_lower for keyword in contact_keywords):
+            # Check if they're asking for contact info (not a technical issue)
+            if not any(tech in message_lower for tech in ['error', 'issue', 'problem', 'not working', 'frozen', 'crash']):
+                print(f"[SalesIQ] Contact request detected")
+                return {
+                    "action": "reply",
+                    "replies": ["You can reach Ace Cloud Hosting support at:\n\nPhone: 1-888-415-5240 (24/7)\nEmail: support@acecloudhosting.com\n\nHow else can I help you?"],
+                    "session_id": session_id
+                }
         
         # Determine if new issue
         new_issue = is_new_issue(message_text, history)
