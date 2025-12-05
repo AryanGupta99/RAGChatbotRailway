@@ -151,23 +151,33 @@ def is_new_issue(message: str, history: List[Dict]) -> bool:
     if len(history) == 0:
         return True
     
-    continuation_keywords = [
-        "yes", "done", "completed", "next", "continue", "ok", "okay",
-        "no", "didn't work", "error", "failed", "stuck", "help"
-    ]
-    
     message_lower = message.lower()
     
-    # Short responses are usually continuations
-    if len(message.split()) <= 5:
-        for keyword in continuation_keywords:
-            if keyword in message_lower:
-                return False
+    # Simple continuation keywords (1-3 words)
+    continuation_keywords = ["yes", "done", "completed", "next", "ok", "okay", "continue"]
     
-    # Long questions about different topics are new issues
-    if any(word in message_lower for word in ["how", "what", "why", "can", "fix", "error", "issue"]):
-        if len(message.split()) > 5:
-            return True
+    # If message is ONLY a continuation keyword, it's a continuation
+    if message_lower.strip() in continuation_keywords:
+        return False
+    
+    # If message is very short (1-3 words) and contains continuation keywords
+    if len(message.split()) <= 3:
+        if any(keyword in message_lower for keyword in continuation_keywords):
+            return False
+    
+    # If message mentions a specific technical issue/topic, it's a NEW issue
+    technical_keywords = [
+        "quickbooks", "frozen", "error", "issue", "problem", "not working",
+        "disk space", "password", "reset", "server", "lacerte", "drake",
+        "outlook", "email", "printer", "install", "setup", "configure"
+    ]
+    
+    if any(keyword in message_lower for keyword in technical_keywords):
+        return True
+    
+    # Long messages (>5 words) are usually new issues
+    if len(message.split()) > 5:
+        return True
     
     return False
 
