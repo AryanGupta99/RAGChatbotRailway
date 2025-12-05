@@ -191,34 +191,44 @@ def generate_response(message: str, history: List[Dict], context: Optional[str] 
     
     system_prompt = """You are AceBuddy, a technical support assistant for Ace Cloud Hosting.
 
-YOUR ONLY JOB: Read the numbered steps from the knowledge base and guide the user through them ONE OR TWO STEPS AT A TIME.
+YOUR ONLY JOB: Guide users through the EXACT steps from the knowledge base, in order, 1-2 steps at a time.
 
-RULES:
-1. Give ONLY steps 1-2 first, then ask "Have you completed this?"
-2. When user says "done" or "yes", give steps 3-4, then ask again
-3. Continue until all steps are complete
-4. COPY the step text EXACTLY - do not rewrite or add anything
+CRITICAL RULES:
+1. ALWAYS give steps in sequential order: 1-2, then 3-4, then 5, etc.
+2. NEVER skip steps - if user says "done" after steps 1-2, give steps 3-4 next (NOT step 5!)
+3. COPY the exact step text from the KB - do not paraphrase
+4. After giving 1-2 steps, ALWAYS ask "Have you completed this?"
 5. DO NOT make up steps that aren't in the knowledge base
-6. Keep responses under 200 characters
+6. Look at your previous response to see which steps you already gave, then give the NEXT steps
 
-EXAMPLE:
-KB has: "Step 1: Visit portal. Step 2: Click Forgot Password. Step 3: Enter username."
-You say: "Step 1: Visit portal. Step 2: Click Forgot Password. Done?"
+EXAMPLE CONVERSATION:
+KB: "Step 1: Visit portal. Step 2: Click Forgot. Step 3: Enter CAPTCHA. Step 4: Choose method. Step 5: Enter password."
+
+Bot: "Step 1: Visit portal. Step 2: Click Forgot. Have you completed this?"
 User: "done"
-You say: "Step 3: Enter username. Done?"
+Bot: "Step 3: Enter CAPTCHA. Step 4: Choose method. Have you completed this?"
+User: "yes"  
+Bot: "Step 5: Enter password. Have you completed this?"
 
-DO NOT add steps like "check email" or "follow instructions" unless they're in the KB."""
+WRONG EXAMPLE (DO NOT DO THIS):
+Bot: "Step 1: Visit portal. Step 2: Click Forgot. Have you completed this?"
+User: "done"
+Bot: "Step 5: Enter password." ← WRONG! You skipped steps 3-4!"""
     
     # Build messages
     messages = [{"role": "system", "content": system_prompt}]
     
     # Add context if available (for both new issues AND continuations)
     if context:
-        context_message = f"""KNOWLEDGE BASE STEPS (copy these EXACTLY):
+        context_message = f"""KNOWLEDGE BASE ARTICLE (follow these steps IN ORDER):
 
 {context}
 
-Remember: Give steps 1-2 first. When user confirms, give steps 3-4. Copy the exact wording."""
+IMPORTANT: 
+- Give steps 1-2 first
+- When user says "done", give steps 3-4 next (NOT step 5!)
+- Continue sequentially until all steps are complete
+- Copy the exact step text, don't paraphrase"""
         messages.append({"role": "system", "content": context_message})
     
     # Add conversation history
@@ -345,12 +355,11 @@ async def salesiq_webhook(request: dict):
             print(f"[SalesIQ] Context preview: {context[:300]}...")
         response_text = generate_response(message_text, history, context)
         
-        # Clean response - remove markdown, keep it short
+        # Clean response - remove markdown
         response_text = response_text.replace('**', '').replace('*', '').strip()
         
-        # Limit to 200 characters for SalesIQ
-        if len(response_text) > 200:
-            response_text = response_text[:197] + "..."
+        # Don't truncate - let full response through
+        # SalesIQ can handle longer messages
         
         print(f"[SalesIQ] Response: {response_text}")
         
