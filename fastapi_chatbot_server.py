@@ -70,6 +70,8 @@ PINECONE_HEADERS = {
 
 # In-memory conversation storage (use Redis in production)
 conversations: Dict[str, List[Dict]] = {}
+# Store context for each session
+session_contexts: Dict[str, str] = {}
 
 # Request/Response Models
 class Message(BaseModel):
@@ -187,36 +189,36 @@ def build_context(context_docs: List[Dict]) -> str:
 def generate_response(message: str, history: List[Dict], context: Optional[str] = None) -> str:
     """Generate response using GPT-4o-mini."""
     
-    system_prompt = """You are AceBuddy, a technical support assistant for Ace Cloud Hosting specializing in QuickBooks, server issues, and cloud hosting support.
+    system_prompt = """You are AceBuddy, a technical support assistant for Ace Cloud Hosting.
 
-CRITICAL INSTRUCTIONS:
-1. USE THE PROVIDED CONTEXT - If context is provided, base your answer on it. Don't make up generic steps.
-2. Be SPECIFIC - Use exact terminology from the context (e.g., "Self-Care portal", "QB instance kill shortcut")
-3. Give ONLY 1-2 steps at a time, then ask "Have you completed this?" or "Did this work?"
-4. If user says "yes" or "done", provide the NEXT 1-2 steps from the context
-5. If user says "no" or reports an error, troubleshoot that specific step
-6. Keep responses SHORT (under 200 characters when possible)
-7. Be conversational and encouraging
-8. If no relevant context is found, acknowledge and offer to connect them with support
+YOUR ONLY JOB: Read the numbered steps from the knowledge base and guide the user through them ONE OR TWO STEPS AT A TIME.
 
-EXAMPLE GOOD RESPONSE (using context):
-"Let's reset your server password via Self-Care. First, log in to https://selfcare.acecloudhosting.com. Done?"
+RULES:
+1. Give ONLY steps 1-2 first, then ask "Have you completed this?"
+2. When user says "done" or "yes", give steps 3-4, then ask again
+3. Continue until all steps are complete
+4. COPY the step text EXACTLY - do not rewrite or add anything
+5. DO NOT make up steps that aren't in the knowledge base
+6. Keep responses under 200 characters
 
-EXAMPLE BAD RESPONSE (generic):
-"Go to the control panel and find the password reset option."
+EXAMPLE:
+KB has: "Step 1: Visit portal. Step 2: Click Forgot Password. Step 3: Enter username."
+You say: "Step 1: Visit portal. Step 2: Click Forgot Password. Done?"
+User: "done"
+You say: "Step 3: Enter username. Done?"
 
-Remember: Use the context provided! Be specific, not generic!"""
+DO NOT add steps like "check email" or "follow instructions" unless they're in the KB."""
     
     # Build messages
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Add context if available (only for new issues)
-    if context and len(history) == 0:
-        context_message = f"""RELEVANT KNOWLEDGE BASE INFORMATION:
+    # Add context if available (for both new issues AND continuations)
+    if context:
+        context_message = f"""KNOWLEDGE BASE STEPS (copy these EXACTLY):
 
 {context}
 
-IMPORTANT: Use the EXACT steps and terminology from above. Don't make up generic steps. If the context has specific URLs, portal names, or procedures, use them exactly as written. Break the solution into 1-2 steps at a time."""
+Remember: Give steps 1-2 first. When user confirms, give steps 3-4. Copy the exact wording."""
         messages.append({"role": "system", "content": context_message})
     
     # Add conversation history
@@ -325,13 +327,22 @@ async def salesiq_webhook(request: dict):
                 context_docs = retrieve_context(message_text, top_k=3)
                 if context_docs:
                     context = build_context(context_docs)
+                    # Store context for this session
+                    session_contexts[session_id] = context
                     print(f"[SalesIQ] Retrieved {len(context_docs)} context documents")
             except Exception as e:
                 print(f"[SalesIQ] Context retrieval failed: {str(e)}")
                 # Continue without context
+        else:
+            # Continuation - use stored context if available
+            context = session_contexts.get(session_id)
+            if context:
+                print(f"[SalesIQ] Using stored context for continuation")
         
         # Generate response
         print(f"[SalesIQ] Calling OpenAI...")
+        if context:
+            print(f"[SalesIQ] Context preview: {context[:300]}...")
         response_text = generate_response(message_text, history, context)
         
         # Clean response - remove markdown, keep it short
@@ -420,8 +431,15 @@ async def chat(request: ChatRequest):
 @app.post("/reset/{session_id}")
 async def reset_conversation(session_id: str):
     """Reset conversation for a session."""
+    reset_count = 0
     if session_id in conversations:
         del conversations[session_id]
+        reset_count += 1
+    if session_id in session_contexts:
+        del session_contexts[session_id]
+        reset_count += 1
+    
+    if reset_count > 0:
         return {"status": "success", "message": f"Conversation {session_id} reset"}
     return {"status": "not_found", "message": f"Session {session_id} not found"}
 
