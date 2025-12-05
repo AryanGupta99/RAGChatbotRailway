@@ -89,7 +89,10 @@ class ChatResponse(BaseModel):
     timestamp: str
 
 def retrieve_context(query: str, top_k: int = 3):
-    """Retrieve relevant documents from Pinecone."""
+    """
+    Retrieve relevant documents from Pinecone.
+    Prioritizes KB articles over chat transcripts.
+    """
     # Generate query embedding
     response = openai_client.embeddings.create(
         model=EMBEDDING_MODEL,
@@ -97,24 +100,49 @@ def retrieve_context(query: str, top_k: int = 3):
     )
     query_embedding = response.data[0].embedding
     
-    # Search Pinecone
+    # First, try to get KB articles
     url = f"https://{INDEX_HOST}/query"
-    payload = {
+    kb_payload = {
+        "vector": query_embedding,
+        "topK": 5,
+        "includeMetadata": True,
+        "filter": {"source": {"$eq": "kb_article"}}
+    }
+    
+    kb_response = requests.post(
+        url,
+        headers=PINECONE_HEADERS,
+        json=kb_payload,
+        verify=False
+    )
+    kb_response.raise_for_status()
+    kb_results = kb_response.json().get('matches', [])
+    
+    # Filter KB articles with good scores (>0.4)
+    good_kb_articles = [m for m in kb_results if m['score'] > 0.4]
+    
+    # If we have good KB articles, use them
+    if good_kb_articles:
+        print(f"[Context] Using {len(good_kb_articles)} KB articles")
+        return good_kb_articles[:top_k]
+    
+    # Otherwise, fall back to all sources
+    print(f"[Context] No good KB articles found, using all sources")
+    all_payload = {
         "vector": query_embedding,
         "topK": top_k,
         "includeMetadata": True
     }
     
-    response = requests.post(
+    all_response = requests.post(
         url,
         headers=PINECONE_HEADERS,
-        json=payload,
+        json=all_payload,
         verify=False
     )
-    response.raise_for_status()
-    results = response.json()
+    all_response.raise_for_status()
     
-    return results.get('matches', [])
+    return all_response.json().get('matches', [])
 
 def is_new_issue(message: str, history: List[Dict]) -> bool:
     """Determine if this is a new issue or continuation."""
@@ -159,41 +187,36 @@ def build_context(context_docs: List[Dict]) -> str:
 def generate_response(message: str, history: List[Dict], context: Optional[str] = None) -> str:
     """Generate response using GPT-4o-mini."""
     
-    system_prompt = """You are a helpful technical support assistant for Ace Cloud Hosting.
+    system_prompt = """You are AceBuddy, a technical support assistant for Ace Cloud Hosting specializing in QuickBooks, server issues, and cloud hosting support.
 
-CRITICAL INSTRUCTIONS FOR STEP-BY-STEP GUIDANCE:
-1. When user asks about a technical issue, provide ONLY the first 1-2 steps
-2. After each step, ask "Have you completed this?" or "Did this work?"
-3. Wait for user confirmation before providing next steps
-4. If user says "yes" or "done", provide the NEXT 1-2 steps
+CRITICAL INSTRUCTIONS:
+1. USE THE PROVIDED CONTEXT - If context is provided, base your answer on it. Don't make up generic steps.
+2. Be SPECIFIC - Use exact terminology from the context (e.g., "Self-Care portal", "QB instance kill shortcut")
+3. Give ONLY 1-2 steps at a time, then ask "Have you completed this?" or "Did this work?"
+4. If user says "yes" or "done", provide the NEXT 1-2 steps from the context
 5. If user says "no" or reports an error, troubleshoot that specific step
-6. Keep responses SHORT and FOCUSED (3-5 sentences max)
-7. Be conversational, friendly, and encouraging
-8. Track progress through the resolution process
-9. When issue is resolved, congratulate and ask if they need anything else
+6. Keep responses SHORT (under 200 characters when possible)
+7. Be conversational and encouraging
+8. If no relevant context is found, acknowledge and offer to connect them with support
 
-EXAMPLE GOOD RESPONSE:
-"Let's fix this together. First:
-1. Close QuickBooks completely
-2. Open QuickBooks Tool Hub
+EXAMPLE GOOD RESPONSE (using context):
+"Let's reset your server password via Self-Care. First, log in to https://selfcare.acecloudhosting.com. Done?"
 
-Have you completed these steps?"
+EXAMPLE BAD RESPONSE (generic):
+"Go to the control panel and find the password reset option."
 
-EXAMPLE BAD RESPONSE (DON'T DO THIS):
-"Here are all 15 steps: Step 1... Step 2... Step 3... [dumps everything]"
-
-Remember: Guide step-by-step, not all at once!"""
+Remember: Use the context provided! Be specific, not generic!"""
     
     # Build messages
     messages = [{"role": "system", "content": system_prompt}]
     
     # Add context if available (only for new issues)
     if context and len(history) == 0:
-        context_message = f"""Here is relevant information from our knowledge base:
+        context_message = f"""RELEVANT KNOWLEDGE BASE INFORMATION:
 
 {context}
 
-Use this to guide the user step-by-step. Remember: Show only 1-2 steps at a time!"""
+IMPORTANT: Use the EXACT steps and terminology from above. Don't make up generic steps. If the context has specific URLs, portal names, or procedures, use them exactly as written. Break the solution into 1-2 steps at a time."""
         messages.append({"role": "system", "content": context_message})
     
     # Add conversation history
@@ -260,8 +283,14 @@ async def salesiq_webhook(request: dict):
         # Log incoming request for debugging
         print(f"[SalesIQ] Received: {request}")
         
-        # Extract session_id
-        session_id = request.get('session_id', 'unknown')
+        # Extract session_id from SalesIQ's nested structure
+        visitor = request.get('visitor', {})
+        session_id = (
+            visitor.get('active_conversation_id') or 
+            request.get('session_id') or 
+            request.get('visitor', {}).get('id') or
+            'unknown'
+        )
         
         # Extract message text from nested structure
         message_obj = request.get('message', {})
