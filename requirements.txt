@@ -1,3 +1,11 @@
 pymupdf
 pandas
 python-dotenv
+openai>=1.0.0
+pinecone-client>=3.0.0
+tqdm
+fastapi
+uvicorn
+pydantic
+requests
+urllib3
