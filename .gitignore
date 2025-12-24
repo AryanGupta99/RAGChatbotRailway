@@ -72,7 +72,7 @@ run_pipeline.py
 interactive_chatbot.py
 rag_chatbot.py
 chatbot.py
-config.py
+
 
 # Documentation (keep only essential)
 EMBEDDING_FLOW_EXPLAINED.md

@@ -1,1 +1,1 @@
-web: python llm_chatbot.py
+web: python main.py

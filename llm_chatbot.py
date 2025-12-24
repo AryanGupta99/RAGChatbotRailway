@@ -1507,7 +1507,7 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     
     print("="*70)
-    print("ACE CLOUD HOSTING - SUPPORT BOT (HYBRID LLM)")
+    print("ACE CLOUD HOSTING - SUPPORT BOT")
     print("="*70)
     print(f"\n[STARTING] FastAPI server on port {port}...")
     print(f"[ENDPOINT] http://0.0.0.0:{port}")
